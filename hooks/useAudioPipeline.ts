@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 
 export interface UseAudioPipelineReturn {
     startRecording: (onChunk: (base64PCM: string) => void) => Promise<void>;
@@ -43,7 +43,10 @@ export function useAudioPipeline(): UseAudioPipelineReturn {
                 bytes[i] = binaryString.charCodeAt(i);
             }
 
-            const int16Array = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
+            const sampleCount = Math.floor(bytes.byteLength / 2);
+            if (sampleCount === 0) return;
+
+            const int16Array = new Int16Array(bytes.buffer, bytes.byteOffset, sampleCount);
             if (int16Array.length === 0) return;
 
             const float32Array = new Float32Array(int16Array.length);
@@ -139,6 +142,18 @@ export function useAudioPipeline(): UseAudioPipelineReturn {
         },
         [stopRecording]
     );
+
+    useEffect(() => {
+        return () => {
+            stopRecording();
+            if (outputAudioCtxRef.current) {
+                if (outputAudioCtxRef.current.state !== 'closed') {
+                    outputAudioCtxRef.current.close().catch(() => {});
+                }
+                outputAudioCtxRef.current = null;
+            }
+        };
+    }, [stopRecording]);
 
     return {
         startRecording,

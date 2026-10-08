@@ -161,4 +161,30 @@ describe('useAudioPipeline hook', () => {
         expect(mockCreateBuffer).toHaveBeenCalledWith(1, int16Samples.length, 24000);
         expect(mockCreateBufferSource).toHaveBeenCalled();
     });
+
+    it('cleans up recording and closes output audio context on unmount', async () => {
+        const { result, unmount } = renderHook(() => useAudioPipeline());
+
+        await act(async () => {
+            await result.current.startRecording(vi.fn());
+        });
+
+        // Initialize output AudioContext via playAudioChunk
+        const int16Samples = new Int16Array([500]);
+        const uint8 = new Uint8Array(int16Samples.buffer);
+        let binary = '';
+        for (let i = 0; i < uint8.byteLength; i++) {
+            binary += String.fromCharCode(uint8[i]);
+        }
+        act(() => {
+            result.current.playAudioChunk(btoa(binary));
+        });
+
+        mockClose.mockClear();
+
+        unmount();
+
+        expect(mockClose).toHaveBeenCalled();
+        mockTracks.forEach(track => expect(track.stop).toHaveBeenCalled());
+    });
 });

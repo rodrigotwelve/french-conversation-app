@@ -17,7 +17,7 @@ class AudioProcessor extends AudioWorkletProcessor {
             return true;
         }
 
-        const inputSampleRate = currentFrame ? sampleRate : 16000;
+        const inputSampleRate = typeof sampleRate !== 'undefined' ? sampleRate : 16000;
         const targetSampleRate = 16000;
 
         if (inputSampleRate === targetSampleRate) {
