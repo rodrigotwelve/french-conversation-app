@@ -8,7 +8,7 @@ export async function POST() {
     }
 
     try {
-        const client = new GoogleGenAI({ apiKey, apiVersion: 'v1alpha' });
+        const client = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
         const token = await client.authTokens.create({
             config: {
                 uses: 1,

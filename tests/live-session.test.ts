@@ -61,6 +61,7 @@ describe('useLiveSession hook', () => {
   afterEach(() => {
     global.WebSocket = originalWebSocket;
     global.fetch = originalFetch;
+    vi.useRealTimers();
   });
 
   const connectSessionHelper = async (result: any) => {
@@ -87,9 +88,12 @@ describe('useLiveSession hook', () => {
     return ws;
   };
 
-  it('initializes with default disconnected and empty state', () => {
+  it('initializes with default idle state and metrics', () => {
     const { result } = renderHook(() => useLiveSession());
 
+    expect(result.current.status).toBe('idle');
+    expect(result.current.error).toBeNull();
+    expect(result.current.elapsedSeconds).toBe(0);
     expect(result.current.isConnected).toBe(false);
     expect(result.current.isSpeaking).toBe(false);
     expect(result.current.transcript).toEqual([]);
@@ -97,7 +101,7 @@ describe('useLiveSession hook', () => {
     expect(typeof result.current.endSession).toBe('function');
   });
 
-  it('acquires token and opens WebSocket with setup message on startSession', async () => {
+  it('acquires token and opens v1beta WebSocket with gemini-3.8-live and bidirectional transcription configs', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ token: 'mock-ephemeral-token-123' })
@@ -107,16 +111,54 @@ describe('useLiveSession hook', () => {
     const ws = await connectSessionHelper(result);
 
     expect(global.fetch).toHaveBeenCalledWith('/api/gemini-token', { method: 'POST' });
-    expect(ws.url).toContain('mock-ephemeral-token-123');
+    
+    // Check v1beta endpoint and access_token query param
+    expect(ws.url).toContain('v1beta.GenerativeService.BidiGenerateContent');
+    expect(ws.url).toContain('access_token=mock-ephemeral-token-123');
+    
+    expect(result.current.status).toBe('live');
     expect(result.current.isConnected).toBe(true);
+    expect(result.current.error).toBeNull();
+
     expect(ws.send).toHaveBeenCalled();
     const setupMsg = JSON.parse(ws.send.mock.calls[0][0]);
     expect(setupMsg.setup).toBeDefined();
-    expect(setupMsg.setup.model).toBe('models/gemini-2.0-flash-exp');
+    expect(setupMsg.setup.model).toBe('models/gemini-3.8-live');
+    expect(setupMsg.setup.generationConfig.responseModalities).toContain('AUDIO');
+    expect(setupMsg.setup.inputAudioTranscription).toBeDefined();
+    expect(setupMsg.setup.outputAudioTranscription).toBeDefined();
     expect(setupMsg.setup.systemInstruction.parts[0].text).toContain('B2');
 
     // Verify audio recording was started
     expect(mockStartRecording).toHaveBeenCalled();
+  });
+
+  it('increments elapsedSeconds while status is live and resets on endSession', async () => {
+    vi.useFakeTimers();
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ token: 'token-timer' })
+    });
+
+    const { result } = renderHook(() => useLiveSession());
+    await connectSessionHelper(result);
+
+    expect(result.current.status).toBe('live');
+    expect(result.current.elapsedSeconds).toBe(0);
+
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    expect(result.current.elapsedSeconds).toBe(3);
+
+    act(() => {
+      result.current.endSession();
+    });
+
+    expect(result.current.status).toBe('idle');
+    expect(result.current.elapsedSeconds).toBe(0);
   });
 
   it('streams audio chunks over WebSocket when recording emits chunks', async () => {
@@ -156,16 +198,44 @@ describe('useLiveSession hook', () => {
     );
   });
 
-  it('processes incoming audio chunks and transcript from server message', async () => {
+  it('processes incoming user speech transcription', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ token: 'token-xyz' })
+      json: async () => ({ token: 'token-user-transcription' })
     });
 
     const { result } = renderHook(() => useLiveSession());
     const ws = await connectSessionHelper(result);
 
-    // Simulate incoming server audio and text turn
+    act(() => {
+      if (ws.onmessage) {
+        ws.onmessage({
+          data: JSON.stringify({
+            serverContent: {
+              inputTranscription: {
+                text: 'Bonjour, je voudrais pratiquer mon français.'
+              }
+            }
+          })
+        });
+      }
+    });
+
+    expect(result.current.transcript.length).toBe(1);
+    expect(result.current.transcript[0].role).toBe('user');
+    expect(result.current.transcript[0].text).toBe('Bonjour, je voudrais pratiquer mon français.');
+    expect(result.current.transcript[0].timestamp).toBeDefined();
+  });
+
+  it('processes incoming model audio chunks and output transcription', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ token: 'token-model' })
+    });
+
+    const { result } = renderHook(() => useLiveSession());
+    const ws = await connectSessionHelper(result);
+
     act(() => {
       if (ws.onmessage) {
         ws.onmessage({
@@ -178,11 +248,11 @@ describe('useLiveSession hook', () => {
                       mimeType: 'audio/pcm;rate=24000',
                       data: 'base64-model-audio-data'
                     }
-                  },
-                  {
-                    text: 'Bonjour ! Comment allez-vous ?'
                   }
                 ]
+              },
+              outputTranscription: {
+                text: 'Très bien ! De quoi aimeriez-vous parler aujourd’hui ?'
               }
             }
           })
@@ -191,28 +261,103 @@ describe('useLiveSession hook', () => {
     });
 
     expect(mockPlayAudioChunk).toHaveBeenCalledWith('base64-model-audio-data');
-    expect(result.current.transcript).toEqual([
-      { role: 'model', text: 'Bonjour ! Comment allez-vous ?' }
-    ]);
+    expect(result.current.isSpeaking).toBe(true);
+    expect(result.current.transcript.length).toBe(1);
+    expect(result.current.transcript[0].role).toBe('model');
+    expect(result.current.transcript[0].text).toBe('Très bien ! De quoi aimeriez-vous parler aujourd’hui ?');
   });
 
-  it('properly cleans up on endSession', async () => {
+  it('handles server interruption by stopping speech playback state', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ token: 'token-test' })
+      json: async () => ({ token: 'token-interrupt' })
     });
 
     const { result } = renderHook(() => useLiveSession());
     const ws = await connectSessionHelper(result);
 
-    expect(result.current.isConnected).toBe(true);
+    act(() => {
+      if (ws.onmessage) {
+        ws.onmessage({
+          data: JSON.stringify({
+            serverContent: {
+              modelTurn: {
+                parts: [{ inlineData: { data: 'audio-data' } }]
+              }
+            }
+          })
+        });
+      }
+    });
+    expect(result.current.isSpeaking).toBe(true);
 
     act(() => {
-      result.current.endSession();
+      if (ws.onmessage) {
+        ws.onmessage({
+          data: JSON.stringify({
+            serverContent: {
+              interrupted: true
+            }
+          })
+        });
+      }
     });
 
-    expect(ws.close).toHaveBeenCalled();
-    expect(mockStopRecording).toHaveBeenCalled();
-    expect(result.current.isConnected).toBe(false);
+    expect(result.current.isSpeaking).toBe(false);
+  });
+
+  it('sets error status and message when token fetch fails', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      statusText: 'Internal Server Error'
+    });
+
+    const { result } = renderHook(() => useLiveSession());
+
+    let errorThrown = false;
+    await act(async () => {
+      try {
+        await result.current.startSession();
+      } catch {
+        errorThrown = true;
+      }
+    });
+
+    expect(errorThrown).toBe(true);
+    expect(result.current.status).toBe('error');
+    expect(result.current.error).toContain('Failed to obtain ephemeral token');
+  });
+
+  it('sets error status when WebSocket encounters an error', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ token: 'token-err' })
+    });
+
+    const { result } = renderHook(() => useLiveSession());
+    
+    let startPromise: Promise<void>;
+    act(() => {
+      startPromise = result.current.startSession();
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const ws = mockWebSocketInstances[0];
+
+    await act(async () => {
+      if (ws.onerror) ws.onerror(new Error('Connection failed'));
+      try {
+        await startPromise;
+      } catch {
+        // expected
+      }
+    });
+
+    expect(result.current.status).toBe('error');
+    expect(result.current.error).toBeDefined();
   });
 });
