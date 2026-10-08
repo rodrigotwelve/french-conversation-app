@@ -31,5 +31,23 @@ describe('POST /api/gemini-token', () => {
         delete process.env.GEMINI_API_KEY;
         const res = await POST();
         expect(res.status).toBe(500);
+        const json = await res.json();
+        expect(json.error).toBe('GEMINI_API_KEY is not set');
+    });
+
+    it('returns 500 if client.authTokens.create rejects', async () => {
+        mockCreate.mockRejectedValueOnce(new Error('SDK Network Error'));
+        const res = await POST();
+        expect(res.status).toBe(500);
+        const json = await res.json();
+        expect(json.error).toBe('SDK Network Error');
+    });
+
+    it('returns 500 if client.authTokens.create does not return a token name', async () => {
+        mockCreate.mockResolvedValueOnce({});
+        const res = await POST();
+        expect(res.status).toBe(500);
+        const json = await res.json();
+        expect(json.error).toBe('Ephemeral token not returned');
     });
 });

@@ -8,12 +8,16 @@ export async function POST() {
     }
 
     try {
-        const client = new GoogleGenAI({ apiKey });
+        const client = new GoogleGenAI({ apiKey, apiVersion: 'v1alpha' });
         const token = await client.authTokens.create({
             config: {
                 uses: 1,
             },
         });
+
+        if (!token?.name) {
+            throw new Error('Ephemeral token not returned');
+        }
 
         return NextResponse.json({ token: token.name });
     } catch (error) {
