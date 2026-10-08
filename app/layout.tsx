@@ -2,9 +2,9 @@ import type { Metadata } from 'next';
 import { Inter, Syne, IBM_Plex_Mono } from 'next/font/google';
 import './globals.css';
 
-const inter = Inter({ subsets: ['latin'], variable: '--font-Inter', weight: ['300', '400'] });
-const syne = Syne({ subsets: ['latin'], variable: '--font-Syne', weight: ['400', '500'] });
-const ibmPlexMono = IBM_Plex_Mono({ subsets: ['latin'], variable: '--font-IBM-Plex-Mono', weight: ['400', '500'] });
+const inter = Inter({ subsets: ['latin'], variable: '--font-inter', weight: ['300', '400'] });
+const syne = Syne({ subsets: ['latin'], variable: '--font-syne', weight: ['400', '500'] });
+const ibmPlexMono = IBM_Plex_Mono({ subsets: ['latin'], variable: '--font-ibm-plex-mono', weight: ['400', '500'] });
 
 export const metadata: Metadata = {
   title: 'Intelligent Euclid',
@@ -19,9 +19,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${inter.variable} ${syne.variable} ${ibmPlexMono.variable} font-sans`}>
-        <div className={`${inter.variable} ${syne.variable} ${ibmPlexMono.variable}`}>
-          {children}
-        </div>
+        {children}
       </body>
     </html>
   );
