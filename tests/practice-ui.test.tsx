@@ -44,6 +44,18 @@ let mockAuthState = {
     loading: false,
 };
 
+let mockFlashcardsState = {
+    flashcards: [
+        { id: 'c1', userId: 'u1', front: 'La gare', back: 'Train station', context: 'Où est la gare ?' }
+    ],
+    reviewCard: vi.fn(),
+    loading: false,
+};
+
+vi.mock('../hooks/useFlashcards', () => ({
+    useFlashcards: () => mockFlashcardsState,
+}));
+
 vi.mock('../hooks/useLiveSession', () => ({
     useLiveSession: () => mockLiveSessionState,
 }));
@@ -195,13 +207,26 @@ describe('Practice UI Components', () => {
     });
 
     describe('PracticePage full integration', () => {
-        it('renders Swiss editorial header with level B2, goal, and streak badge', () => {
+        it('renders Swiss editorial header with level B2, goal, tabs and streak badge', () => {
             render(<PracticePage />);
 
-            expect(screen.getByText('Atelier Oral')).toBeDefined();
+            expect(screen.getByText('Atelier B2')).toBeDefined();
             expect(screen.getByText('Niveau B2')).toBeDefined();
+            expect(screen.getByText('Oral')).toBeDefined();
+            expect(screen.getByText('Fiches SRS')).toBeDefined();
             expect(screen.getByText(/Objectif : Avril 2027 \(PVT France\)/i)).toBeDefined();
             expect(screen.getByText('5 JOURS')).toBeDefined();
+        });
+
+        it('switches between Oral practice and SRS Flashcards tabs', () => {
+            render(<PracticePage />);
+            expect(screen.getByText('Prêt pour la pratique orale')).toBeDefined();
+
+            const flashcardsTabBtn = screen.getByRole('button', { name: /Fiches SRS/i });
+            fireEvent.click(flashcardsTabBtn);
+
+            expect(screen.queryByText('Prêt pour la pratique orale')).toBeNull();
+            expect(screen.getByText('La gare')).toBeDefined();
         });
 
         it('renders single day streak without plural JOURS when streak is 1', () => {

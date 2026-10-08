@@ -25,6 +25,7 @@ describe('POST /api/gemini-token', () => {
         const json = await res.json();
         expect(res.status).toBe(200);
         expect(json.token).toBe('ephemeral-mock-xyz');
+        expect(json.apiKey).toBe('test-api-key');
     });
 
     it('returns 500 if GEMINI_API_KEY is missing', async () => {

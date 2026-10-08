@@ -1,17 +1,21 @@
 'use client';
 
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { useLiveSession } from '@/hooks/useLiveSession';
 import { useUserProgress } from '@/hooks/useUserProgress';
 import { useAuth } from '@/hooks/useAuth';
-import { Calendar, Flame, AlertCircle, RotateCcw } from 'lucide-react';
+import { useFlashcards } from '@/hooks/useFlashcards';
+import { Calendar, Flame, AlertCircle, RotateCcw, Mic, BookOpen } from 'lucide-react';
 import { VoiceStage } from '@/components/practice/VoiceStage';
 import { EditorialFeed } from '@/components/practice/EditorialFeed';
 import { FloatingDock } from '@/components/practice/FloatingDock';
+import { FlashcardDeck } from '@/components/practice/FlashcardDeck';
 
 export default function PracticePage() {
+    const [activeTab, setActiveTab] = useState<'oral' | 'flashcards'>('oral');
     const { user } = useAuth();
     const { progress, recordSessionCompletion } = useUserProgress();
+    const { flashcards, reviewCard, loading: flashcardsLoading } = useFlashcards();
     const {
         startSession,
         endSession,
@@ -85,16 +89,46 @@ export default function PracticePage() {
 
     return (
         <div className="h-screen max-h-screen overflow-hidden bg-brand-canvas text-brand-textPrimary flex flex-col justify-between font-sans selection:bg-zinc-200">
-            {/* Header: Macro-goal & Authentic Streak */}
+            {/* Header: Macro-goal, Tabs & Authentic Streak */}
             <header className="shrink-0 border-b border-brand-border bg-brand-surface/80 backdrop-blur-xs px-6 py-3.5">
                 <div className="max-w-4xl mx-auto flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                        <span className="font-display text-xl font-medium tracking-tight">
-                            Atelier Oral
-                        </span>
-                        <span className="hidden sm:inline-block px-2.5 py-0.5 rounded text-xs font-mono bg-zinc-200 text-brand-textPrimary">
-                            Niveau {progress.targetLevel || 'B2'}
-                        </span>
+                    <div className="flex items-center space-x-4">
+                        <div className="flex items-center space-x-3">
+                            <span className="font-display text-xl font-medium tracking-tight">
+                                Atelier B2
+                            </span>
+                            <span className="hidden sm:inline-block px-2.5 py-0.5 rounded text-xs font-mono bg-zinc-200 text-brand-textPrimary">
+                                Niveau {progress.targetLevel || 'B2'}
+                            </span>
+                        </div>
+
+                        {/* Navigation Tabs */}
+                        <div className="flex items-center space-x-1 bg-zinc-100 p-0.5 rounded-lg border border-brand-border ml-2">
+                            <button
+                                type="button"
+                                onClick={() => setActiveTab('oral')}
+                                className={`flex items-center space-x-1.5 px-3 py-1 rounded-md text-xs font-mono transition-colors cursor-pointer ${
+                                    activeTab === 'oral'
+                                        ? 'bg-white text-brand-textPrimary shadow-2xs font-medium'
+                                        : 'text-brand-textMuted hover:text-brand-textPrimary'
+                                }`}
+                            >
+                                <Mic className="w-3.5 h-3.5 stroke-[1.75]" />
+                                <span>Oral</span>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setActiveTab('flashcards')}
+                                className={`flex items-center space-x-1.5 px-3 py-1 rounded-md text-xs font-mono transition-colors cursor-pointer ${
+                                    activeTab === 'flashcards'
+                                        ? 'bg-white text-brand-textPrimary shadow-2xs font-medium'
+                                        : 'text-brand-textMuted hover:text-brand-textPrimary'
+                                }`}
+                            >
+                                <BookOpen className="w-3.5 h-3.5 stroke-[1.75]" />
+                                <span>Fiches SRS</span>
+                            </button>
+                        </div>
                     </div>
 
                     <div className="flex items-center space-x-4 sm:space-x-6">
@@ -141,9 +175,17 @@ export default function PracticePage() {
                 </div>
             )}
 
-            {/* Main Stage Area: Single-viewport transition between VoiceStage and EditorialFeed */}
-            <main className="flex-1 overflow-hidden flex flex-col items-center justify-center p-4">
-                {isIdleAndEmpty ? (
+            {/* Main Stage Area */}
+            <main className="flex-1 overflow-y-auto flex flex-col items-center justify-center p-4">
+                {activeTab === 'flashcards' ? (
+                    <div className="w-full max-w-4xl py-6">
+                        <FlashcardDeck
+                            flashcards={flashcards}
+                            onReview={reviewCard}
+                            loading={flashcardsLoading}
+                        />
+                    </div>
+                ) : isIdleAndEmpty ? (
                     <VoiceStage status={status} onStart={handleToggleSession} />
                 ) : (
                     <EditorialFeed
@@ -155,16 +197,18 @@ export default function PracticePage() {
                 )}
             </main>
 
-            {/* Floating Dock: Bottom Controls */}
-            <footer className="shrink-0">
-                <FloatingDock
-                    status={status}
-                    isSpeaking={isSpeaking}
-                    elapsedSeconds={elapsedSeconds}
-                    getAudioLevels={getAudioLevels}
-                    onToggleSession={handleToggleSession}
-                />
-            </footer>
+            {/* Floating Dock: Bottom Controls (Shown only on oral tab) */}
+            {activeTab === 'oral' && (
+                <footer className="shrink-0">
+                    <FloatingDock
+                        status={status}
+                        isSpeaking={isSpeaking}
+                        elapsedSeconds={elapsedSeconds}
+                        getAudioLevels={getAudioLevels}
+                        onToggleSession={handleToggleSession}
+                    />
+                </footer>
+            )}
         </div>
     );
 }

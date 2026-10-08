@@ -97,8 +97,10 @@ export function useLiveSession(): UseLiveSessionReturn {
                 throw new Error('Ephemeral token not found in response');
             }
 
-            // 2. Open WebSocket with v1beta endpoint and access_token query param
-            const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?access_token=${token}`;
+            // 2. Open WebSocket with v1beta endpoint and key or access_token
+            const wsUrl = data.apiKey
+                ? `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${data.apiKey}`
+                : `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?access_token=${token}`;
 
             await new Promise<void>((resolve, reject) => {
                 const ws = new WebSocket(wsUrl);
@@ -149,9 +151,18 @@ export function useLiveSession(): UseLiveSessionReturn {
                     }
                 };
 
-                ws.onmessage = (event) => {
+                ws.onmessage = async (event) => {
                     try {
-                        const message = typeof event.data === 'string' ? JSON.parse(event.data) : null;
+                        let textData: string | null = null;
+                        if (typeof event.data === 'string') {
+                            textData = event.data;
+                        } else if (event.data instanceof Blob) {
+                            textData = await event.data.text();
+                        } else if (event.data && typeof (event.data as any).text === 'function') {
+                            textData = await (event.data as any).text();
+                        }
+
+                        const message = textData ? JSON.parse(textData) : null;
                         if (!message) return;
 
                         // Interruption signal

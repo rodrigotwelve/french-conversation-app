@@ -19,7 +19,10 @@ export async function POST() {
             throw new Error('Ephemeral token not returned');
         }
 
-        return NextResponse.json({ token: token.name });
+        return NextResponse.json({ 
+            token: token.name,
+            apiKey: apiKey 
+        });
     } catch (error) {
         return NextResponse.json(
             { error: error instanceof Error ? error.message : 'Failed to create ephemeral token' },

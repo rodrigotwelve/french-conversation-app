@@ -7,7 +7,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'jsdom',
-    pool: 'threads',
+    pool: 'forks',
     alias: {
       '@': path.resolve(import.meta.dirname, './'),
       'next/font/google': path.resolve(import.meta.dirname, './tests/__mocks__/nextFontMock.ts')

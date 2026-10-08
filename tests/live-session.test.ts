@@ -267,6 +267,53 @@ describe('useLiveSession hook', () => {
     expect(result.current.transcript[0].text).toBe('Très bien ! De quoi aimeriez-vous parler aujourd’hui ?');
   });
 
+  it('processes incoming model message delivered as a Blob', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ token: 'token-blob' })
+    });
+
+    const { result } = renderHook(() => useLiveSession());
+    const ws = await connectSessionHelper(result);
+
+    const payloadString = JSON.stringify({
+      serverContent: {
+        modelTurn: {
+          parts: [{ inlineData: { data: 'blob-audio-pcm-data' } }]
+        },
+        outputTranscription: { text: 'Bonjour depuis un Blob !' }
+      }
+    });
+
+    const mockBlob = {
+      text: vi.fn().mockResolvedValue(payloadString)
+    };
+
+    await act(async () => {
+      if (ws.onmessage) {
+        await ws.onmessage({ data: mockBlob as any });
+      }
+    });
+
+    expect(mockPlayAudioChunk).toHaveBeenCalledWith('blob-audio-pcm-data');
+    expect(result.current.isSpeaking).toBe(true);
+    expect(result.current.transcript.length).toBe(1);
+    expect(result.current.transcript[0].text).toBe('Bonjour depuis un Blob !');
+  });
+
+  it('uses apiKey in WebSocket URL when returned by API', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ token: 'mock-token', apiKey: 'direct-key-123' })
+    });
+
+    const { result } = renderHook(() => useLiveSession());
+    const ws = await connectSessionHelper(result);
+
+    expect(ws.url).toContain('?key=direct-key-123');
+    expect(result.current.status).toBe('live');
+  });
+
   it('handles server interruption by stopping speech playback state', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
