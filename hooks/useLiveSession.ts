@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { useAudioPipeline } from './useAudioPipeline';
+import { useAudioPipeline, AudioLevels } from './useAudioPipeline';
 
 export interface LiveTranscriptItem {
     role: 'user' | 'model';
@@ -18,6 +18,7 @@ export interface UseLiveSessionReturn {
     isConnected: boolean;
     isSpeaking: boolean;
     transcript: LiveTranscriptItem[];
+    getAudioLevels: () => AudioLevels;
 }
 
 const SYSTEM_INSTRUCTION_TEXT =
@@ -31,7 +32,7 @@ export function useLiveSession(): UseLiveSessionReturn {
     const [transcript, setTranscript] = useState<LiveTranscriptItem[]>([]);
 
     const wsRef = useRef<WebSocket | null>(null);
-    const { startRecording, stopRecording, playAudioChunk } = useAudioPipeline();
+    const { startRecording, stopRecording, playAudioChunk, getAudioLevels } = useAudioPipeline();
 
     // Session timer
     useEffect(() => {
@@ -254,5 +255,6 @@ export function useLiveSession(): UseLiveSessionReturn {
         isConnected: status === 'live',
         isSpeaking,
         transcript,
+        getAudioLevels,
     };
 }
