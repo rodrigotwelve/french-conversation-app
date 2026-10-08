@@ -7,6 +7,7 @@ describe('useAudioPipeline hook', () => {
     let mockCreateMediaStreamSource: ReturnType<typeof vi.fn>;
     let mockCreateBuffer: ReturnType<typeof vi.fn>;
     let mockCreateBufferSource: ReturnType<typeof vi.fn>;
+    let mockCreateAnalyser: ReturnType<typeof vi.fn>;
     let mockClose: ReturnType<typeof vi.fn>;
     let mockResume: ReturnType<typeof vi.fn>;
     let mockAudioWorkletNode: any;
@@ -38,6 +39,20 @@ describe('useAudioPipeline hook', () => {
             stop: vi.fn(),
             onended: null
         });
+        mockCreateAnalyser = vi.fn(() => {
+            return {
+                fftSize: 256,
+                frequencyBinCount: 128,
+                getByteFrequencyData: vi.fn((arr: Uint8Array) => {
+                    arr.fill(128);
+                }),
+                getByteTimeDomainData: vi.fn((arr: Uint8Array) => {
+                    arr.fill(150);
+                }),
+                connect: vi.fn(),
+                disconnect: vi.fn()
+            };
+        });
         mockClose = vi.fn().mockResolvedValue(undefined);
         mockResume = vi.fn().mockResolvedValue(undefined);
 
@@ -64,6 +79,7 @@ describe('useAudioPipeline hook', () => {
             createMediaStreamSource = mockCreateMediaStreamSource;
             createBuffer = mockCreateBuffer;
             createBufferSource = mockCreateBufferSource;
+            createAnalyser = mockCreateAnalyser;
             close = mockClose;
             resume = mockResume;
 
@@ -92,12 +108,17 @@ describe('useAudioPipeline hook', () => {
         vi.unstubAllGlobals();
     });
 
-    it('starts with isRecording as false', () => {
+    it('starts with isRecording as false and exposes default getAudioLevels', () => {
         const { result } = renderHook(() => useAudioPipeline());
         expect(result.current.isRecording).toBe(false);
+        expect(result.current.getAudioLevels).toBeDefined();
+        const levels = result.current.getAudioLevels();
+        expect(levels.inputLevel).toBe(0);
+        expect(levels.outputLevel).toBe(0);
+        expect(levels.timeDomainData).toBeInstanceOf(Uint8Array);
     });
 
-    it('requests media, loads worklet, and sets isRecording to true on startRecording', async () => {
+    it('requests media, loads worklet, initializes input AnalyserNode, and sets isRecording to true on startRecording', async () => {
         const { result } = renderHook(() => useAudioPipeline());
         const onChunk = vi.fn();
 
@@ -107,7 +128,12 @@ describe('useAudioPipeline hook', () => {
 
         expect(mockGetUserMedia).toHaveBeenCalledWith({ audio: true });
         expect(mockAddModule).toHaveBeenCalledWith('/audio-processor.js');
+        expect(mockCreateAnalyser).toHaveBeenCalled();
         expect(result.current.isRecording).toBe(true);
+
+        const levels = result.current.getAudioLevels();
+        expect(levels.inputLevel).toBeGreaterThan(0);
+        expect(levels.timeDomainData.length).toBeGreaterThan(0);
 
         // Simulate incoming audio chunk from worklet
         const pcm16 = new Int16Array([100, -200, 300]);
@@ -140,9 +166,11 @@ describe('useAudioPipeline hook', () => {
         expect(result.current.isRecording).toBe(false);
         mockTracks.forEach(track => expect(track.stop).toHaveBeenCalled());
         expect(mockClose).toHaveBeenCalled();
+        const levels = result.current.getAudioLevels();
+        expect(levels.inputLevel).toBe(0);
     });
 
-    it('schedules playback when playAudioChunk is called with 24kHz base64 PCM', async () => {
+    it('schedules playback with output AnalyserNode when playAudioChunk is called with 24kHz base64 PCM', async () => {
         const { result } = renderHook(() => useAudioPipeline());
 
         // Create a 24kHz test chunk with 10 samples
@@ -159,7 +187,11 @@ describe('useAudioPipeline hook', () => {
         });
 
         expect(mockCreateBuffer).toHaveBeenCalledWith(1, int16Samples.length, 24000);
+        expect(mockCreateAnalyser).toHaveBeenCalled();
         expect(mockCreateBufferSource).toHaveBeenCalled();
+
+        const levels = result.current.getAudioLevels();
+        expect(levels.outputLevel).toBeGreaterThan(0);
     });
 
     it('cleans up recording and closes output audio context on unmount', async () => {
@@ -188,3 +220,4 @@ describe('useAudioPipeline hook', () => {
         mockTracks.forEach(track => expect(track.stop).toHaveBeenCalled());
     });
 });
+

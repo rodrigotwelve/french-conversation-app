@@ -1,10 +1,17 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 
+export interface AudioLevels {
+    inputLevel: number;
+    outputLevel: number;
+    timeDomainData: Uint8Array<ArrayBuffer>;
+}
+
 export interface UseAudioPipelineReturn {
     startRecording: (onChunk: (base64PCM: string) => void) => Promise<void>;
     stopRecording: () => void;
     playAudioChunk: (base64PCM: string) => void;
     isRecording: boolean;
+    getAudioLevels: () => AudioLevels;
 }
 
 export function useAudioPipeline(): UseAudioPipelineReturn {
@@ -15,16 +22,29 @@ export function useAudioPipeline(): UseAudioPipelineReturn {
     const inputAudioCtxRef = useRef<AudioContext | null>(null);
     const workletNodeRef = useRef<AudioWorkletNode | null>(null);
     const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+    const inputAnalyserRef = useRef<AnalyserNode | null>(null);
 
     // Playback refs
     const outputAudioCtxRef = useRef<AudioContext | null>(null);
+    const outputAnalyserRef = useRef<AnalyserNode | null>(null);
     const nextPlaybackTimeRef = useRef<number>(0);
+
+    // Reusable buffers for telemetry without GC thrashing
+    const inputFreqBufferRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
+    const outputFreqBufferRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
+    const timeDomainBufferRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
+
 
     const getOutputAudioContext = useCallback(() => {
         if (!outputAudioCtxRef.current || outputAudioCtxRef.current.state === 'closed') {
             const ctx = new AudioContext({ sampleRate: 24000 });
             outputAudioCtxRef.current = ctx;
             nextPlaybackTimeRef.current = 0;
+
+            const analyser = ctx.createAnalyser();
+            analyser.fftSize = 256;
+            analyser.connect(ctx.destination);
+            outputAnalyserRef.current = analyser;
         }
         if (outputAudioCtxRef.current.state === 'suspended') {
             outputAudioCtxRef.current.resume();
@@ -64,7 +84,12 @@ export function useAudioPipeline(): UseAudioPipelineReturn {
 
             const source = ctx.createBufferSource();
             source.buffer = audioBuffer;
-            source.connect(ctx.destination);
+
+            if (outputAnalyserRef.current) {
+                source.connect(outputAnalyserRef.current);
+            } else {
+                source.connect(ctx.destination);
+            }
 
             const currentTime = ctx.currentTime;
             const startTime = Math.max(currentTime, nextPlaybackTimeRef.current);
@@ -84,6 +109,11 @@ export function useAudioPipeline(): UseAudioPipelineReturn {
         if (sourceNodeRef.current) {
             sourceNodeRef.current.disconnect();
             sourceNodeRef.current = null;
+        }
+
+        if (inputAnalyserRef.current) {
+            inputAnalyserRef.current.disconnect();
+            inputAnalyserRef.current = null;
         }
 
         if (inputAudioCtxRef.current) {
@@ -112,6 +142,10 @@ export function useAudioPipeline(): UseAudioPipelineReturn {
                 const inputCtx = new AudioContext({ sampleRate: 16000 });
                 inputAudioCtxRef.current = inputCtx;
 
+                const analyser = inputCtx.createAnalyser();
+                analyser.fftSize = 256;
+                inputAnalyserRef.current = analyser;
+
                 await inputCtx.audioWorklet.addModule('/audio-processor.js');
 
                 const source = inputCtx.createMediaStreamSource(stream);
@@ -133,6 +167,7 @@ export function useAudioPipeline(): UseAudioPipelineReturn {
                     onChunk(base64);
                 };
 
+                source.connect(analyser);
                 source.connect(workletNode);
                 setIsRecording(true);
             } catch (err) {
@@ -143,9 +178,77 @@ export function useAudioPipeline(): UseAudioPipelineReturn {
         [stopRecording]
     );
 
+    const getAudioLevels = useCallback((): AudioLevels => {
+        let inputLevel = 0;
+        let outputLevel = 0;
+
+        if (!timeDomainBufferRef.current) {
+            timeDomainBufferRef.current = new Uint8Array(128).fill(128);
+        }
+        const fallbackBuffer = timeDomainBufferRef.current;
+
+        // Input stream telemetry
+        if (inputAnalyserRef.current && inputAudioCtxRef.current && inputAudioCtxRef.current.state === 'running') {
+            const analyser = inputAnalyserRef.current;
+            if (!inputFreqBufferRef.current || inputFreqBufferRef.current.length !== analyser.frequencyBinCount) {
+                inputFreqBufferRef.current = new Uint8Array(analyser.frequencyBinCount);
+            }
+            const data = inputFreqBufferRef.current;
+            analyser.getByteFrequencyData(data);
+            let sum = 0;
+            for (let i = 0; i < data.length; i++) {
+                sum += data[i];
+            }
+            inputLevel = sum / (data.length * 255);
+        }
+
+        // Output stream telemetry
+        if (outputAnalyserRef.current && outputAudioCtxRef.current && outputAudioCtxRef.current.state === 'running') {
+            const analyser = outputAnalyserRef.current;
+            if (!outputFreqBufferRef.current || outputFreqBufferRef.current.length !== analyser.frequencyBinCount) {
+                outputFreqBufferRef.current = new Uint8Array(analyser.frequencyBinCount);
+            }
+            const data = outputFreqBufferRef.current;
+            analyser.getByteFrequencyData(data);
+            let sum = 0;
+            for (let i = 0; i < data.length; i++) {
+                sum += data[i];
+            }
+            outputLevel = sum / (data.length * 255);
+        }
+
+        // Prefer active stream for waveform rendering (output if playing, else input)
+        const activeAnalyser = (outputLevel > 0.01 && outputLevel >= inputLevel)
+            ? outputAnalyserRef.current
+            : (inputAnalyserRef.current || outputAnalyserRef.current);
+
+        if (activeAnalyser) {
+            const fftSize = activeAnalyser.fftSize;
+            if (!timeDomainBufferRef.current || timeDomainBufferRef.current.length !== fftSize) {
+                timeDomainBufferRef.current = new Uint8Array(fftSize);
+            }
+            activeAnalyser.getByteTimeDomainData(timeDomainBufferRef.current);
+            return {
+                inputLevel: Math.min(1, Math.max(0, inputLevel)),
+                outputLevel: Math.min(1, Math.max(0, outputLevel)),
+                timeDomainData: timeDomainBufferRef.current
+            };
+        }
+
+        return {
+            inputLevel: 0,
+            outputLevel: 0,
+            timeDomainData: fallbackBuffer
+        };
+    }, []);
+
     useEffect(() => {
         return () => {
             stopRecording();
+            if (outputAnalyserRef.current) {
+                outputAnalyserRef.current.disconnect();
+                outputAnalyserRef.current = null;
+            }
             if (outputAudioCtxRef.current) {
                 if (outputAudioCtxRef.current.state !== 'closed') {
                     outputAudioCtxRef.current.close().catch(() => {});
@@ -159,6 +262,8 @@ export function useAudioPipeline(): UseAudioPipelineReturn {
         startRecording,
         stopRecording,
         playAudioChunk,
-        isRecording
+        isRecording,
+        getAudioLevels
     };
 }
+
